@@ -5,9 +5,7 @@ import itertools
 
 # Constantes de Entrada
 CPU_TIME_AVG = 3
-CPU_TIME_STD_DEV = 0.5
 IO_TIME_AVG = 9
-IO_TIME_STD_DEV = 1
 AVERAGE_ARRIVAL_INTERVAL = 4
 CPU_REQUEST_PERCENTAGE = 0.7
 
@@ -101,12 +99,12 @@ def generate_requests(env, balancer):
     for i in itertools.count():
         if random.random() < CPU_REQUEST_PERCENTAGE:
             req_type = "CPU"
-            # Gera um valor aleatório com média CPU_TIME_AVG e desvio padrão CPU_TIME_STD_DEV
-            process_time = random.normalvariate(CPU_TIME_AVG, CPU_TIME_STD_DEV)
+            # Gera um valor aleatório com média CPU_TIME_AVG usando distribuição exponencial
+            process_time = random.expovariate(1.0 / CPU_TIME_AVG)
         else:
             req_type = "I/O"
-            # Gera um valor aleatório com média IO_TIME_AVG e desvio padrão IO_TIME_STD_DEV
-            process_time = random.normalvariate(IO_TIME_AVG, IO_TIME_STD_DEV)
+            # Gera um valor aleatório com média IO_TIME_AVG usando distribuição exponencial
+            process_time = random.expovariate(1.0 / IO_TIME_AVG)
 
         # Garantir que não é zero nem negativo
         process_time = max(0.1, process_time)
@@ -138,7 +136,7 @@ if __name__ == "__main__":
         servers.append(simpy.Resource(env, 1))
 
     metrics = Metrics()
-    balancer = Balancer(env, servers, metrics, "round_robin")
+    balancer = Balancer(env, servers, metrics, "shortest_queue")
 
     env.process(generate_requests(env, balancer))
 
