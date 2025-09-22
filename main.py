@@ -2,29 +2,43 @@ import simpy
 import random
 import itertools
 
-
-# Constantes de Entrada
-CPU_TIME_AVG = 3
-IO_TIME_AVG = 9
-AVERAGE_ARRIVAL_INTERVAL = 4
-CPU_REQUEST_PERCENTAGE = 0.7
-
 # Número de servidores
 NUM_SERVERS = 3
+SERVER_SPEEDS = [1.5, 1, 0.5, 1] #0, 1, 2 são normais, 3 é emergencial
+MAX_SIZE_QUEUE = 10
+
+
+# Nota: μ vale 4 -> 0.5+1+1.5 + 1(emergencial)
+# Nota: μ está sendo medido em poder de processamento por unidade de tempo
+
+# Constantes de Entrada, 
+CPU_TIME_AVG = 3
+IO_TIME_AVG = 9
+CPU_REQUEST_PERCENTAGE = 0.7
+
+
+AVERAGE_ARRIVAL_INTERVAL = 1.2
+# Nota: λ = (CPU_TIME*CPU_PERCENTAGE + IO_TIME*IO_PERCENTAGE) * 1/AVERAGE_ARRIVAL_INTERVAL ->
+# -> λ = 4.8/AVERAGE_ARRIVAL_INTERVAL
+
 # Duração da simulação
-TOTAL_TIME_DURATION = 800
+TOTAL_TIME_DURATION = 5000
 
 
 class Metrics:
     def __init__(self):
         self.response_times = []
-        self.server_work_time = [0] * NUM_SERVERS
+        self.server_work_time = [0] * (NUM_SERVERS + 1) # + 1 é o emergencial
+        self.discarded_requests = 0
 
     def add_response_time(self, time):
         self.response_times.append(time)
 
     def add_server_work(self, server_id, time):
         self.server_work_time[server_id] += time
+    
+    def add_discarded_request(self):
+        self.discarded_requests += 1
 
     def show_metrics(self):
         # Vazão
@@ -41,15 +55,28 @@ class Metrics:
         for id, work_time in enumerate(self.server_work_time):
             utilization = (work_time / TOTAL_TIME_DURATION) * 100
             sum_utilization += utilization
-            print(f"Utilizacao do servidor {id}: {utilization:.2f}%")
+            if id < NUM_SERVERS:
+                print(f"Utilizacao do servidor {id}: {utilization:.2f}%")
+            else:
+                print(f"Utilizacao do servidor EMERGENCIAL: {utilization:.2f}%")
 
-        print(f"Utilizacao media do sistema: {(sum_utilization / NUM_SERVERS):.2f}%")
+        print(f"Utilizacao media do sistema (considerando o emergencial): {(sum_utilization / (NUM_SERVERS + 1)):.2f}%")
+        
+        # Descarte de requisições
+        print("----Informacoes de descarte----")
+        if self.discarded_requests > 0:
+            print(f"Requisições Processadas: {len(self.response_times)}")
+            print(f"Requisições Descartadas: {self.discarded_requests} ({(self.discarded_requests / (self.discarded_requests + len(self.response_times))) * 100:.2f}%)")
+        else:
+            print(f"Requisições Processadas: {len(self.response_times)}")
+            print(f"Requisições Descartadas: 0")
 
 
 class Balancer:
-    def __init__(self, env, servers, metrics, method="random"):
+    def __init__(self, env, servers, emergency_server, metrics, method="random"):
         self.env = env
         self.servers = servers
+        self.emergency_server = emergency_server
         self.metrics = metrics
         self.method = method
 
@@ -71,11 +98,38 @@ class Balancer:
             chosen_server = self.servers[self.rr_counter]
             self.rr_counter = (self.rr_counter + 1) % NUM_SERVERS
 
+        # política que faz uso do fato dos servidores terem processamentos diferentes
+        elif self.method == "least_work":
+            min_finish_time = float('inf')
+            for i, server in enumerate(self.servers):
+                speed = SERVER_SPEEDS[i]
+                # tempo do que está sendo processado no momento
+                current_workload = server.users[0].req['duration'] if server.users else 0
+                # tempo de todos na fila
+                queue_workload = sum(r.req['duration'] for r in server.queue if hasattr(r, "req"))
+                
+                expected_time = (current_workload + queue_workload) / speed
+                
+                if expected_time < min_finish_time:
+                    min_finish_time = expected_time
+                    chosen_server = server
+            
         else:
             raise ValueError(f"Metodo de balanceamento desconhecido")
 
         server_id = self.servers.index(chosen_server)
-        # print(f"{self.env.now:.2f}: Req {req['id']} enviada para Servidor {server_id}")
+        
+        # Checar se a fila do servidor escolhido está cheia
+        if len(self.servers[server_id].queue) >= MAX_SIZE_QUEUE:
+            # Corrige chosen_server e server_id
+            chosen_server = self.emergency_server  
+            server_id = NUM_SERVERS
+            
+            # Se servidor emergencial também estiver cheio, descarta requisição
+            if len(self.emergency_server.queue) >= MAX_SIZE_QUEUE:
+                self.metrics.add_discarded_request()
+                return # Encerra o método, requisição não é processada
+            
         self.env.process(
             process_request(self.env, req, chosen_server, server_id, self.metrics)
         )
@@ -83,15 +137,22 @@ class Balancer:
 
 def process_request(env, req, server, server_id, metrics):
     with server.request() as request:
+        # usado para a política least_work ter acesso aos tempos
+        request.req = req
+        
         # espera servidor ficar livre
         yield request
-    
-        # "processa" requisição
-        yield env.timeout(req["duration"])
+
+        server_spped = SERVER_SPEEDS[server_id]
+        
+        process_time = req["duration"] / server_spped
+        
+        # processa requisição na velocidade do servidor
+        yield env.timeout(process_time)
 
         # atualiza métricas
         metrics.add_response_time(env.now - req["arrival"])
-        metrics.add_server_work(server_id, req["duration"])
+        metrics.add_server_work(server_id, process_time)
 
 
 def generate_requests(env, balancer):
@@ -134,9 +195,12 @@ if __name__ == "__main__":
     servers = []
     for _ in range(NUM_SERVERS):
         servers.append(simpy.Resource(env, 1))
+    
+    # cria servidor emergencial
+    emergency_server = simpy.Resource(env, 1)
 
     metrics = Metrics()
-    balancer = Balancer(env, servers, metrics, "shortest_queue")
+    balancer = Balancer(env, servers, emergency_server, metrics, "random")
 
     env.process(generate_requests(env, balancer))
 
