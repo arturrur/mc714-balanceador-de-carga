@@ -16,13 +16,15 @@ CPU_TIME_AVG = 3
 IO_TIME_AVG = 9
 CPU_REQUEST_PERCENTAGE = 0.7
 
-
-AVERAGE_ARRIVAL_INTERVAL = 1.2
+# Parâmetros dos experimentos
+LAMBDAS = [2, 3, 4] # lambda das requisição (input)
+METHODS = ["random", "round_robin", "shortest_queue", "least_work"] # Métodos testados no load balancer
+TOTAL_TIME_DURATION = 10000
 # Nota: λ = (CPU_TIME*CPU_PERCENTAGE + IO_TIME*IO_PERCENTAGE) * 1/AVERAGE_ARRIVAL_INTERVAL ->
 # -> λ = 4.8/AVERAGE_ARRIVAL_INTERVAL
 
 # Duração da simulação
-TOTAL_TIME_DURATION = 5000
+
 
 
 class Metrics:
@@ -184,14 +186,21 @@ def generate_requests(env, balancer):
         # Espera um intervalo aleatório para criar nova requisição (distribuição exponencial com média AVERAGE_ARRIVAL_INTERVAL)
         interval = random.expovariate(1.0 / AVERAGE_ARRIVAL_INTERVAL)
         yield env.timeout(interval)
+        
+def run_experiment(method, lambd):
+    '''
+    Executa uma simulação completa para uma combinação de método e lambda.
+    '''
+    global AVERAGE_ARRIVAL_INTERVAL
 
-
-if __name__ == "__main__":
-    # Replicabilidade
-    random.seed(7777)
-
+    AVERAGE_ARRIVAL_INTERVAL = 4.8 / lambd
+    
+    print(f"\n--- Executando: Método = {method.upper()}, λ = {lambd}, μ = {sum(SERVER_SPEEDS)} ---")
+    
+    # cria ambiente da rodada atual (dupla método-lambda)
     env = simpy.Environment()
 
+    # criar os três servidores padrões
     servers = []
     for _ in range(NUM_SERVERS):
         servers.append(simpy.Resource(env, 1))
@@ -200,10 +209,22 @@ if __name__ == "__main__":
     emergency_server = simpy.Resource(env, 1)
 
     metrics = Metrics()
-    balancer = Balancer(env, servers, emergency_server, metrics, "random")
+    balancer = Balancer(env, servers, emergency_server, metrics, method)
+    
 
     env.process(generate_requests(env, balancer))
 
     env.run(until=TOTAL_TIME_DURATION)
 
     metrics.show_metrics()
+
+
+if __name__ == "__main__":
+    # Replicabilidade
+    random.seed(777)
+    
+    for lambd in LAMBDAS:
+        for method in METHODS:
+            run_experiment(method, lambd)
+            
+    
