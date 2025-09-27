@@ -82,9 +82,6 @@ class Balancer:
         self.metrics = metrics
         self.method = method
 
-        # Usado para as métricas
-        self.response_times = list()
-        self.completed_requests = 0
         # Usado para Round Robin
         self.rr_counter = 0
 
@@ -107,11 +104,12 @@ class Balancer:
                 speed = SERVER_SPEEDS[i]
                 # tempo do que está sendo processado no momento
                 current_workload = server.users[0].req['duration'] if server.users else 0
-                # tempo de todos na fila
+                # tempo de todos os processos aguardando na fila
                 queue_workload = sum(r.req['duration'] for r in server.queue if hasattr(r, "req"))
                 
                 expected_time = (current_workload + queue_workload) / speed
-                
+            
+                # se encontrar um servidor melhor, escolha-o    
                 if expected_time < min_finish_time:
                     min_finish_time = expected_time
                     chosen_server = server
@@ -121,7 +119,7 @@ class Balancer:
 
         server_id = self.servers.index(chosen_server)
         
-        # Checar se a fila do servidor escolhido está cheia
+        # Se a fila do servidor escolhido está cheia, mandar para o emergencial
         if len(self.servers[server_id].queue) >= MAX_SIZE_QUEUE:
             # Corrige chosen_server e server_id
             chosen_server = self.emergency_server  
@@ -132,6 +130,7 @@ class Balancer:
                 self.metrics.add_discarded_request()
                 return # Encerra o método, requisição não é processada
             
+        # processa a requisição
         self.env.process(
             process_request(self.env, req, chosen_server, server_id, self.metrics)
         )
@@ -169,7 +168,7 @@ def generate_requests(env, balancer):
             # Gera um valor aleatório com média IO_TIME_AVG usando distribuição exponencial
             process_time = random.expovariate(1.0 / IO_TIME_AVG)
 
-        # Garantir que não é zero nem negativo
+        # tempo minímo de process_time settado como 0.1
         process_time = max(0.1, process_time)
 
         # Cria requisição
@@ -189,7 +188,7 @@ def generate_requests(env, balancer):
         
 def run_experiment(method, lambd):
     '''
-    Executa uma simulação completa para uma combinação de método e lambda.
+    Executa uma simulação completa para uma combinação método--lambda.
     '''
     global AVERAGE_ARRIVAL_INTERVAL
 
@@ -208,7 +207,10 @@ def run_experiment(method, lambd):
     # cria servidor emergencial
     emergency_server = simpy.Resource(env, 1)
 
+    # cria objeto que guarda e mostra as métricas
     metrics = Metrics()
+    
+    # criar o Load Balancer do experimento
     balancer = Balancer(env, servers, emergency_server, metrics, method)
     
 
@@ -223,6 +225,7 @@ if __name__ == "__main__":
     # Replicabilidade
     random.seed(777)
     
+    # Executa um experimento isolado para cada par método--lambda
     for lambd in LAMBDAS:
         for method in METHODS:
             run_experiment(method, lambd)
