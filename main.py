@@ -120,8 +120,8 @@ class Balancer:
                 )
 
                 expected_time = (current_workload + queue_workload) / speed
-            
-                # se encontrar um servidor melhor, escolha-o    
+
+                # se encontrar um servidor melhor, escolha-o
                 if expected_time < min_finish_time:
                     min_finish_time = expected_time
                     chosen_server = server
@@ -130,7 +130,7 @@ class Balancer:
             raise ValueError(f"Metodo de balanceamento desconhecido")
 
         server_id = self.servers.index(chosen_server)
-        
+
         # Se a fila do servidor escolhido está cheia, mandar para o emergencial
         if len(self.servers[server_id].queue) >= MAX_SIZE_QUEUE:
             # Corrige chosen_server e server_id
@@ -140,8 +140,8 @@ class Balancer:
             # Se servidor emergencial também estiver cheio, descarta requisição
             if len(self.emergency_server.queue) >= MAX_SIZE_QUEUE:
                 self.metrics.add_discarded_request()
-                return # Encerra o método, requisição não é processada
-            
+                return  # Encerra o método, requisição não é processada
+
         # processa a requisição
         self.env.process(
             process_request(self.env, req, chosen_server, server_id, self.metrics)
@@ -200,9 +200,9 @@ def generate_requests(env, balancer):
 
 
 def run_experiment(method, lambd):
-    '''
+    """
     Executa uma simulação completa para uma combinação método--lambda.
-    '''
+    """
     global AVERAGE_ARRIVAL_INTERVAL
 
     AVERAGE_ARRIVAL_INTERVAL = 4.8 / lambd
@@ -224,7 +224,7 @@ def run_experiment(method, lambd):
 
     # cria objeto que guarda e mostra as métricas
     metrics = Metrics()
-    
+
     # criar o Load Balancer do experimento
     balancer = Balancer(env, servers, emergency_server, metrics, method)
 
@@ -238,7 +238,7 @@ def run_experiment(method, lambd):
 if __name__ == "__main__":
     # Replicabilidade
     random.seed(777)
-    
+
     # Executa um experimento isolado para cada par método--lambda
     for lambd in LAMBDAS:
         for method in METHODS:
